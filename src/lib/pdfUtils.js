@@ -169,22 +169,40 @@ export function printSingleBill(order, items, retailer) {
   doc.save(filename)
 }
 
-// ── MULTI BILL (2-up or 4-up) ────────────────────────────────
+// ── MULTI BILL (2-up portrait OR 4-up landscape) ─────────────
 export function printMultiBills(orders, orderItems, perPage) {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  // 4-up: landscape A4 (297 × 210), 2 cols × 2 rows — each bill ~140 × 96mm
+  // 2-up: portrait A4 (210 × 297), 1 col × 2 rows  — each bill ~194 × 140mm
+  const is4up = perPage === 4
+  const orientation = is4up ? 'landscape' : 'portrait'
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation })
   addDevanagariFont(doc)
 
-  const pageW = 210, pageH = 297
-  const cols = 2
-  const rows = perPage === 2 ? 1 : 2
+  // Page dimensions after orientation
+  const pageW = is4up ? 297 : 210
+  const pageH = is4up ? 210 : 297
 
-  // Gap between bills horizontally (between col 0 and col 1)
-  const hGap = perPage === 4 ? 8 : 6
-  // Outer margin
+  const cols = 2
+  const rows = is4up ? 2 : 1
   const outerMargin = 8
-  // Bill width: total width minus outer margins minus horizontal gap, divided by 2
+  const hGap = 10   // gap between left and right bill
+  const vGap = is4up ? 8 : 0  // gap between top and bottom bill (4-up only)
+
   const billW = (pageW - 2 * outerMargin - hGap) / cols
-  const billH = (pageH - 2 * outerMargin - (rows > 1 ? 6 : 0)) / rows
+  const billH = (pageH - 2 * outerMargin - (rows > 1 ? vGap : 0)) / rows
+
+  // Font sizes — bigger in landscape because each bill is wider
+  const fs = {
+    brandName:    is4up ? 10   : 13,
+    dateLine:     is4up ? 7.5  : 9,
+    badge:        is4up ? 6.5  : 8,
+    retailerName: is4up ? 11   : 14,
+    retailerMeta: is4up ? 8    : 9.5,
+    tableHead:    is4up ? 8.5  : 10,
+    tableBody:    is4up ? 9    : 11,
+    totalBar:     is4up ? 10.5 : 13,
+    pendingBar:   is4up ? 8    : 10,
+  }
 
   let orderIndex = 0
   let firstPage = true
@@ -199,58 +217,89 @@ export function printMultiBills(orders, orderItems, perPage) {
         const items = sortItemsByQty(orderItems[order.id] || [])
         const retailer = order.retailers || {}
 
-        // x accounts for outer margin + col offset + horizontal gap
-        const x = outerMargin + col * (billW + hGap)
-        const y = outerMargin + row * (billH + (rows > 1 ? 6 : 0))
-        const bw = billW   // bill inner width
-        const innerX = x + 2  // left edge for content
-        const innerW = bw - 4 // usable content width inside bill
+        const x  = outerMargin + col * (billW + hGap)
+        const y  = outerMargin + row * (billH + vGap)
+        const bw = billW
+        const bh = billH - 2
+        const iX = x + 3          // inner left
+        const iW = bw - 6         // inner usable width
 
-        doc.setDrawColor(180, 170, 160)
-        doc.setLineWidth(0.4)
-        doc.rect(x, y, bw, billH - 2)
+        // Bill border
+        doc.setDrawColor(160, 148, 136)
+        doc.setLineWidth(0.5)
+        doc.rect(x, y, bw, bh)
 
-        // ── Header ──
+        // ── Header band ──
+        const headerH = is4up ? 14 : 17
         doc.setFillColor(59, 32, 7)
-        doc.rect(x, y, bw, 13, 'F')
+        doc.rect(x, y, bw, headerH, 'F')
         doc.setTextColor(255, 255, 255)
+
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(8.5)
-        doc.text('PATIDAR K NAMKEEN', innerX, y + 5.5)
+        doc.setFontSize(fs.brandName)
+        doc.text('PATIDAR K NAMKEEN', iX, y + (is4up ? 6 : 7.5))
+
         doc.setFont('helvetica', 'normal')
-        doc.setFontSize(6.5)
-        doc.text(`${order.order_date} | ${order.slot === 'morning' ? 'Morning' : 'Evening'}`, innerX, y + 10.5)
-        doc.text(`#${order.id.toUpperCase().slice(-6)}`, x + bw - 3, y + 5.5, { align: 'right' })
+        doc.setFontSize(fs.dateLine)
+        doc.text(
+          `${order.order_date}  |  ${order.slot === 'morning' ? '☀ Morning' : '☾ Evening'}`,
+          iX, y + (is4up ? 11.5 : 13.5)
+        )
+        doc.text(
+          `#${order.id.toUpperCase().slice(-6)}`,
+          x + bw - 4, y + (is4up ? 6 : 7.5),
+          { align: 'right' }
+        )
 
         // Payment badge
         const [pr, pg, pb] = paymentColor(order.payment_status)
+        const badgeW = is4up ? 20 : 24
+        const badgeH = is4up ? 5.5 : 6.5
         doc.setFillColor(pr, pg, pb)
-        doc.roundedRect(x + bw - 20, y + 7, 18, 5, 1, 1, 'F')
-        doc.setTextColor(255, 255, 255)
+        doc.roundedRect(x + bw - badgeW - 2, y + headerH - badgeH - 1.5, badgeW, badgeH, 1.5, 1.5, 'F')
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(5.5)
-        doc.text(paymentLabel(order.payment_status), x + bw - 11, y + 11, { align: 'center' })
+        doc.setFontSize(fs.badge)
+        doc.setTextColor(255, 255, 255)
+        doc.text(
+          paymentLabel(order.payment_status),
+          x + bw - (badgeW / 2) - 2, y + headerH - 3,
+          { align: 'center' }
+        )
 
         // ── Retailer box ──
+        const retailerMeta = [
+          retailer.phone && `Ph: ${retailer.phone}`,
+          retailer.area  && retailer.area,
+        ].filter(Boolean).join('   ')
+
         doc.autoTable({
-          startY: y + 14,
-          margin: { left: innerX, right: pageW - (x + bw) + 2 },
+          startY: y + headerH + 1,
+          margin: { left: iX, right: pageW - (x + bw) + 3 },
           theme: 'plain',
-          styles: { fillColor: [253, 246, 236], cellPadding: { top: 1.5, bottom: 1.5, left: 2.5, right: 2.5 } },
+          styles: {
+            fillColor: [253, 246, 236],
+            cellPadding: { top: 1.5, bottom: 1, left: 2.5, right: 2.5 },
+          },
           body: [
-            [{ content: retailer.name || '—', styles: { fontSize: 9.5, textColor: [59, 32, 7], font: 'helvetica', fontStyle: 'bold' } }],
-            [{ content: retailer.phone ? `Ph: ${retailer.phone}` : '', styles: { fontSize: 7, textColor: [100, 100, 100], font: 'helvetica' } }],
+            [{
+              content: retailer.name || '—',
+              styles: { fontSize: fs.retailerName, textColor: [59, 32, 7], font: 'helvetica', fontStyle: 'bold' },
+            }],
+            [{
+              content: retailerMeta,
+              styles: { fontSize: fs.retailerMeta, textColor: [100, 100, 100], font: 'helvetica' },
+            }],
           ],
-          tableWidth: innerW,
+          tableWidth: iW,
         })
 
-        const afterRetailer = doc.lastAutoTable.finalY + 1.5
+        const afterRetailer = doc.lastAutoTable.finalY + 2
 
         // ── Items table ──
         doc.autoTable({
           startY: afterRetailer,
-          margin: { left: innerX, right: pageW - (x + bw) + 2 },
-          head: [['Product', 'Size', 'Qty', 'Rs.']],
+          margin: { left: iX, right: pageW - (x + bw) + 3 },
+          head: [['Product', 'Size / Variant', 'Qty', 'Rs.']],
           body: items.map(item => [
             item.product_name,
             item.variant_name,
@@ -258,45 +307,57 @@ export function printMultiBills(orders, orderItems, perPage) {
             Number(item.amount).toFixed(0),
           ]),
           headStyles: {
-            fillColor: [232, 132, 26], textColor: [255, 255, 255],
-            fontSize: 7, fontStyle: 'bold',
-            cellPadding: { top: 2, bottom: 2, left: 2, right: 1 },
+            fillColor: [232, 132, 26],
+            textColor: [255, 255, 255],
+            fontSize: fs.tableHead,
+            fontStyle: 'bold',
             font: 'helvetica',
+            cellPadding: { top: 2.5, bottom: 2.5, left: 2.5, right: 1.5 },
           },
           bodyStyles: {
-            fontSize: 7.5, textColor: [59, 32, 7],
-            cellPadding: { top: 2, bottom: 2, left: 2, right: 1 },
+            fontSize: fs.tableBody,
+            textColor: [40, 20, 5],
             font: 'Devanagari',
+            cellPadding: { top: 2.5, bottom: 2.5, left: 2.5, right: 1.5 },
           },
+          alternateRowStyles: { fillColor: [253, 248, 242] },
           columnStyles: {
-            0: { cellWidth: innerW * 0.42 },
-            1: { cellWidth: innerW * 0.28 },
-            2: { font: 'helvetica', halign: 'center', fontStyle: 'bold', cellWidth: innerW * 0.12 },
-            3: { font: 'helvetica', halign: 'right', fontStyle: 'bold', cellWidth: innerW * 0.18 },
+            0: { cellWidth: iW * 0.40 },
+            1: { cellWidth: iW * 0.30 },
+            2: { cellWidth: iW * 0.12, font: 'helvetica', fontStyle: 'bold', halign: 'center' },
+            3: { cellWidth: iW * 0.18, font: 'helvetica', fontStyle: 'bold', halign: 'right' },
           },
-          tableWidth: innerW,
+          tableWidth: iW,
         })
 
-        const ty = doc.lastAutoTable.finalY + 1
+        const ty = doc.lastAutoTable.finalY + 1.5
 
         // ── Total bar ──
+        const totalH = is4up ? 9 : 11
         doc.setFillColor(232, 132, 26)
-        doc.rect(innerX, ty, innerW, 8, 'F')
+        doc.rect(iX, ty, iW, totalH, 'F')
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(9)
+        doc.setFontSize(fs.totalBar)
         doc.setTextColor(255, 255, 255)
-        doc.text('TOTAL', innerX + 2, ty + 5.8)
-        doc.text(`Rs.${Number(order.total).toFixed(2)}`, x + bw - 3, ty + 5.8, { align: 'right' })
+        doc.text('TOTAL', iX + 3, ty + totalH - 2.5)
+        doc.text(`Rs.${Number(order.total).toFixed(2)}`, x + bw - 4, ty + totalH - 2.5, { align: 'right' })
 
         // ── Pending bar ──
         if (order.payment_status !== 'paid') {
           const pendingAmt = Number(order.total) - Number(order.amount_paid || 0)
+          const paidAmt    = Number(order.amount_paid || 0)
+          const pendingH   = is4up ? 7 : 8.5
           doc.setFillColor(...paymentColor(order.payment_status))
-          doc.rect(innerX, ty + 9, innerW, 6, 'F')
+          doc.rect(iX, ty + totalH + 1, iW, pendingH, 'F')
           doc.setFont('helvetica', 'bold')
-          doc.setFontSize(6.5)
+          doc.setFontSize(fs.pendingBar)
           doc.setTextColor(255, 255, 255)
-          doc.text(`PENDING: Rs.${pendingAmt.toFixed(2)}`, x + bw - 3, ty + 13.5, { align: 'right' })
+          if (order.payment_status === 'partial') {
+            doc.text(`Paid: Rs.${paidAmt.toFixed(2)}`, iX + 3, ty + totalH + 1 + pendingH - 2)
+            doc.text(`PENDING: Rs.${pendingAmt.toFixed(2)}`, x + bw - 4, ty + totalH + 1 + pendingH - 2, { align: 'right' })
+          } else {
+            doc.text(`PENDING: Rs.${Number(order.total).toFixed(2)}`, x + bw - 4, ty + totalH + 1 + pendingH - 2, { align: 'right' })
+          }
         }
 
         orderIndex++
