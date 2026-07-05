@@ -177,8 +177,14 @@ export function printMultiBills(orders, orderItems, perPage) {
   const pageW = 210, pageH = 297
   const cols = 2
   const rows = perPage === 2 ? 1 : 2
-  const billW = (pageW - 18) / cols
-  const billH = (pageH - 18) / rows
+
+  // Gap between bills horizontally (between col 0 and col 1)
+  const hGap = perPage === 4 ? 8 : 6
+  // Outer margin
+  const outerMargin = 8
+  // Bill width: total width minus outer margins minus horizontal gap, divided by 2
+  const billW = (pageW - 2 * outerMargin - hGap) / cols
+  const billH = (pageH - 2 * outerMargin - (rows > 1 ? 6 : 0)) / rows
 
   let orderIndex = 0
   let firstPage = true
@@ -192,52 +198,58 @@ export function printMultiBills(orders, orderItems, perPage) {
         const order = orders[orderIndex]
         const items = sortItemsByQty(orderItems[order.id] || [])
         const retailer = order.retailers || {}
-        const x = 9 + col * billW
-        const y = 9 + row * billH
 
-        doc.setDrawColor(200, 190, 180)
-        doc.rect(x, y, billW - 2, billH - 2)
+        // x accounts for outer margin + col offset + horizontal gap
+        const x = outerMargin + col * (billW + hGap)
+        const y = outerMargin + row * (billH + (rows > 1 ? 6 : 0))
+        const bw = billW   // bill inner width
+        const innerX = x + 2  // left edge for content
+        const innerW = bw - 4 // usable content width inside bill
 
-        // Header
+        doc.setDrawColor(180, 170, 160)
+        doc.setLineWidth(0.4)
+        doc.rect(x, y, bw, billH - 2)
+
+        // ── Header ──
         doc.setFillColor(59, 32, 7)
-        doc.rect(x, y, billW - 2, 11, 'F')
+        doc.rect(x, y, bw, 13, 'F')
         doc.setTextColor(255, 255, 255)
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(7)
-        doc.text('PATIDAR K NAMKEEN', x + 2, y + 4.5)
+        doc.setFontSize(8.5)
+        doc.text('PATIDAR K NAMKEEN', innerX, y + 5.5)
         doc.setFont('helvetica', 'normal')
-        doc.setFontSize(5.5)
-        doc.text(`${order.order_date} | ${order.slot === 'morning' ? 'Morning' : 'Evening'}`, x + 2, y + 8.5)
-        doc.text(`#${order.id.toUpperCase().slice(-6)}`, x + billW - 4, y + 4.5, { align: 'right' })
+        doc.setFontSize(6.5)
+        doc.text(`${order.order_date} | ${order.slot === 'morning' ? 'Morning' : 'Evening'}`, innerX, y + 10.5)
+        doc.text(`#${order.id.toUpperCase().slice(-6)}`, x + bw - 3, y + 5.5, { align: 'right' })
 
         // Payment badge
         const [pr, pg, pb] = paymentColor(order.payment_status)
         doc.setFillColor(pr, pg, pb)
-        doc.roundedRect(x + billW - 18, y + 6, 15, 4, 1, 1, 'F')
+        doc.roundedRect(x + bw - 20, y + 7, 18, 5, 1, 1, 'F')
         doc.setTextColor(255, 255, 255)
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(4.5)
-        doc.text(paymentLabel(order.payment_status), x + billW - 10.5, y + 9, { align: 'center' })
+        doc.setFontSize(5.5)
+        doc.text(paymentLabel(order.payment_status), x + bw - 11, y + 11, { align: 'center' })
 
-        // Retailer name via autoTable (Devanagari)
+        // ── Retailer box ──
         doc.autoTable({
-          startY: y + 12,
-          margin: { left: x + 1, right: pageW - (x + billW - 2) + 1 },
+          startY: y + 14,
+          margin: { left: innerX, right: pageW - (x + bw) + 2 },
           theme: 'plain',
-          styles: { fillColor: [253, 246, 236], cellPadding: 1 },
+          styles: { fillColor: [253, 246, 236], cellPadding: { top: 1.5, bottom: 1.5, left: 2.5, right: 2.5 } },
           body: [
-            [{ content: retailer.name || '—', styles: { fontSize: 8, textColor: [59, 32, 7], font: 'helvetica', fontStyle: 'bold' } }],
-            [{ content: retailer.phone ? `Ph: ${retailer.phone}` : '', styles: { fontSize: 5.5, textColor: [100, 100, 100], font: 'helvetica' } }],
+            [{ content: retailer.name || '—', styles: { fontSize: 9.5, textColor: [59, 32, 7], font: 'helvetica', fontStyle: 'bold' } }],
+            [{ content: retailer.phone ? `Ph: ${retailer.phone}` : '', styles: { fontSize: 7, textColor: [100, 100, 100], font: 'helvetica' } }],
           ],
-          tableWidth: billW - 4,
+          tableWidth: innerW,
         })
 
-        const afterRetailer = doc.lastAutoTable.finalY + 1
+        const afterRetailer = doc.lastAutoTable.finalY + 1.5
 
-        // Items table
+        // ── Items table ──
         doc.autoTable({
           startY: afterRetailer,
-          margin: { left: x + 1, right: pageW - (x + billW - 2) + 1 },
+          margin: { left: innerX, right: pageW - (x + bw) + 2 },
           head: [['Product', 'Size', 'Qty', 'Rs.']],
           body: items.map(item => [
             item.product_name,
@@ -245,35 +257,46 @@ export function printMultiBills(orders, orderItems, perPage) {
             item.quantity,
             Number(item.amount).toFixed(0),
           ]),
-          headStyles: { fillColor: [232, 132, 26], textColor: [255, 255, 255], fontSize: 5, fontStyle: 'bold', cellPadding: 1, font: 'helvetica' },
-          bodyStyles: { fontSize: 5.5, textColor: [59, 32, 7], cellPadding: 1, font: 'Devanagari' },
-          columnStyles: {
-            2: { font: 'helvetica', halign: 'center', fontStyle: 'bold' },
-            3: { font: 'helvetica', halign: 'right', fontStyle: 'bold' },
+          headStyles: {
+            fillColor: [232, 132, 26], textColor: [255, 255, 255],
+            fontSize: 7, fontStyle: 'bold',
+            cellPadding: { top: 2, bottom: 2, left: 2, right: 1 },
+            font: 'helvetica',
           },
-          tableWidth: billW - 4,
+          bodyStyles: {
+            fontSize: 7.5, textColor: [59, 32, 7],
+            cellPadding: { top: 2, bottom: 2, left: 2, right: 1 },
+            font: 'Devanagari',
+          },
+          columnStyles: {
+            0: { cellWidth: innerW * 0.42 },
+            1: { cellWidth: innerW * 0.28 },
+            2: { font: 'helvetica', halign: 'center', fontStyle: 'bold', cellWidth: innerW * 0.12 },
+            3: { font: 'helvetica', halign: 'right', fontStyle: 'bold', cellWidth: innerW * 0.18 },
+          },
+          tableWidth: innerW,
         })
 
         const ty = doc.lastAutoTable.finalY + 1
 
-        // Total
+        // ── Total bar ──
         doc.setFillColor(232, 132, 26)
-        doc.rect(x + 1, ty, billW - 4, 7, 'F')
+        doc.rect(innerX, ty, innerW, 8, 'F')
         doc.setFont('helvetica', 'bold')
-        doc.setFontSize(7.5)
+        doc.setFontSize(9)
         doc.setTextColor(255, 255, 255)
-        doc.text('TOTAL', x + 3, ty + 5)
-        doc.text(`Rs.${Number(order.total).toFixed(2)}`, x + billW - 4, ty + 5, { align: 'right' })
+        doc.text('TOTAL', innerX + 2, ty + 5.8)
+        doc.text(`Rs.${Number(order.total).toFixed(2)}`, x + bw - 3, ty + 5.8, { align: 'right' })
 
-        // Pending
+        // ── Pending bar ──
         if (order.payment_status !== 'paid') {
           const pendingAmt = Number(order.total) - Number(order.amount_paid || 0)
           doc.setFillColor(...paymentColor(order.payment_status))
-          doc.rect(x + 1, ty + 7, billW - 4, 5, 'F')
+          doc.rect(innerX, ty + 9, innerW, 6, 'F')
           doc.setFont('helvetica', 'bold')
-          doc.setFontSize(5.5)
+          doc.setFontSize(6.5)
           doc.setTextColor(255, 255, 255)
-          doc.text(`PENDING: Rs.${pendingAmt.toFixed(2)}`, x + billW - 4, ty + 10.5, { align: 'right' })
+          doc.text(`PENDING: Rs.${pendingAmt.toFixed(2)}`, x + bw - 3, ty + 13.5, { align: 'right' })
         }
 
         orderIndex++
